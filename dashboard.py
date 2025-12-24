@@ -1,39 +1,43 @@
 import streamlit as st
 import httpx
 
-# 1. THE METADATA CRAWLER
-def get_schema_audit():
+def run_global_audit():
     headers = {
         "apikey": st.secrets["SUPABASE_KEY"],
         "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}"
     }
     
-    # This queries the Postgres system tables to find ALL your tables and columns
-    schema_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/rpc/get_schema_metadata" 
-    # NOTE: You may need to create a simple Postgres function for the above, 
-    # or use the 'information_schema' via a direct SQL query.
-    
-    # FALLBACK: Manual scan of your known primary tables
-    tables = ["companies", "robot_models", "technical_specs", "funding_rounds"]
-    audit_report = []
+    # Tables to scan for relations and history
+    tables = ["companies", "robot_models", "technical_specs"]
+    global_report = {}
 
     for table in tables:
         url = f"{st.secrets['SUPABASE_URL']}/rest/v1/{table}?select=*"
         res = httpx.get(url, headers=headers)
-        data = res.json()
         
-        # Check for NULLs or missing historical data
-        missing_fields = [k for k, v in data[0].items() if v is None] if data else "No Data"
-        audit_report.append({
-            "Table": table,
-            "Total Rows": len(data),
-            "Missing/Null Fields": missing_fields
-        })
-    
-    return audit_report
+        if res.status_code == 200:
+            data = res.json()
+            if not data:
+                global_report[table] = "⚠️ Table is EMPTY (No rows found)."
+                continue
+            
+            # Analyze fields
+            all_columns = list(data[0].keys())
+            null_counts = {col: sum(1 for row in data if row.get(col) is None) for col in all_columns}
+            
+            global_report[table] = {
+                "Row Count": len(data),
+                "Columns Found": len(all_columns),
+                "Gaps (Null Fields)": {k: v for k, v in null_counts.items() if v > 0}
+            }
+        else:
+            global_report[table] = f"❌ Error: {res.status_code}"
 
-if st.button("🔍 RUN GLOBAL DISCOVERY SCAN"):
-    report = get_schema_audit()
-    st.write("### 📋 Global Audit Report")
-    st.table(report)
-    st.info("Copy the table above and give it to me to generate the missing input data.")
+    return global_report
+
+st.title("🛡️ Omni-Agent: Universal Discovery")
+if st.button("🔍 START GLOBAL TABLE SCAN"):
+    with st.spinner("Analyzing all fields and relations..."):
+        report = run_global_audit()
+        st.json(report)
+        st.info("Copy this JSON and paste it here. I will use it to provide your missing data.")
