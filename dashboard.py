@@ -1,32 +1,39 @@
 import streamlit as st
-import httpx  # Standard library for web requests
+import httpx
 from google import genai
-import json
 
-# --- 1. CONFIG ---
-# Direct connection to bypass the broken Supabase library
-url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=*,robot_models(*)&limit=1"
-headers = {
-    "apikey": st.secrets["SUPABASE_KEY"],
-    "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}"
-}
-client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+# Page Setup
+st.set_page_config(layout="wide", page_title="Omni-Agent Delta Scanner")
 
-# --- 2. DASHBOARD ---
-st.title("🛡️ Omni-Agent: Global Audit")
+# Direct Connection (Bypasses all library errors)
+def run_audit():
+    url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=*,robot_models(*)&limit=1"
+    headers = {
+        "apikey": st.secrets["SUPABASE_KEY"],
+        "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}"
+    }
+    
+    # 1. Get Data
+    res = httpx.get(url, headers=headers)
+    data = res.json()[0]
+    
+    # 2. AI Search (Past, Present, 94-Columns)
+    ai = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    prompt = f"Audit {data['name']}. Find missing specs for all 94 columns. Find Dec 2025 news and history."
+    response = ai.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+    
+    return data, response.text
 
-if st.button("▶️ RUN TOTAL SCAN"):
-    with st.status("🚀 Bypassing library errors... Scanning Universe...") as s:
-        # Get data directly via HTTP (No Pydantic/Supabase library needed)
-        response = httpx.get(url, headers=headers)
-        data = response.json()
-        
-        if data:
-            target = data[0]
-            # Omni-Agent searches every table, field, past, and present
-            prompt = f"Audit {target['name']} and models {target['robot_models']}. Search all 94 columns for missing specs and Dec 2025 news."
-            ai_res = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
-            
-            st.subheader(f"Results for {target['name']}")
-            st.write(ai_res.text)
-            st.success("Past and Present data synced.")
+st.title("🛡️ Omni-Agent: Global Intelligence Audit")
+st.info("Scanning every table, field, and connection across Past, Present, and Future.")
+
+if st.button("▶️ START DEEP SCAN"):
+    db_data, ai_report = run_audit()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Current Database State")
+        st.json(db_data)
+    with col2:
+        st.subheader("Omni-Agent Discovery (94-Cols + News)")
+        st.write(ai_report)
