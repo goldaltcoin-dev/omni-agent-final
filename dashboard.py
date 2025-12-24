@@ -1,41 +1,37 @@
 import streamlit as st
 import httpx
+from datetime import datetime
 
-def run_deep_audit():
-    headers = {"apikey": st.secrets["SUPABASE_KEY"], "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}"}
-    
-    # 1. DISCOVER TABLES
-    # We fetch the list of tables we just mapped in the SQL view
-    map_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/database_audit_map?select=*"
-    schema_map = httpx.get(map_url, headers=headers).json()
-    
-    unique_tables = list(set([item['table_name'] for item in schema_map]))
-    audit_results = []
+# Headers for Supabase
+headers = {
+    "apikey": st.secrets["SUPABASE_KEY"],
+    "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
 
-    for table in unique_tables:
-        # 2. SCAN FOR NULLS & DATA GAPS
-        data_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/{table}?select=*"
-        res = httpx.get(data_url, headers=headers).json()
+st.title("🛡️ Omni-Agent: Connection Tester")
+
+if st.button("🚀 FORCE SYNC TO DATABASE"):
+    # 1. Get the list of IDs
+    url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=id,name"
+    response = httpx.get(url, headers=headers)
+    companies = response.json()
+    
+    st.write(f"Found {len(companies)} companies. Starting Force-Write...")
+
+    for c in companies:
+        # 2. Prepare the payload
+        payload = {
+            "last_audit": datetime.now().isoformat(),
+            "description": "REAL DATA INJECTED DEC 24"
+        }
         
-        if not res:
-            audit_results.append({"Table": table, "Status": "Empty", "Gaps": "No Data Found"})
-            continue
-
-        columns = list(res[0].keys())
-        gaps = [col for col in columns if any(row.get(col) is None for row in res)]
+        # 3. Try to PATCH the specific ID
+        patch_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?id=eq.{c['id']}"
+        patch_res = httpx.patch(patch_url, headers=headers, json=payload)
         
-        audit_results.append({
-            "Table": table,
-            "Total Rows": len(res),
-            "Gaps Found": len(gaps),
-            "Specific Null Fields": gaps[:5] # Show first 5 missing fields
-        })
-    
-    return audit_results
-
-st.title("🛡️ Omni-Agent: Universal System Audit")
-if st.button("🔍 SCAN ALL TABLES & RELATIONS"):
-    report = run_deep_audit()
-    st.table(report)
-    st.write("### 📋 Instructions for Next Step")
-    st.info("Copy the 'Specific Null Fields' and the table names. Give them to me, and I will generate the historical news and technical specs for ALL of them.")
+        if patch_res.status_code in [200, 204]:
+            st.success(f"✅ Row Updated: {c['name']}")
+        else:
+            st.error(f"❌ Failed {c['name']}: {patch_res.text}")
