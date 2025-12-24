@@ -1,71 +1,63 @@
 import streamlit as st
 import httpx
 from google import genai
-import datetime
+import time
 
-# --- 1. CONFIG & LAYOUT ---
-st.set_page_config(layout="wide", page_title="Omni-Agent Global Audit")
-st.title("🛡️ Omni-Agent: Global Intelligence Loop")
-st.markdown(f"**Audit Status:** Active | **System Date:** {datetime.date.today()}")
+st.set_page_config(layout="wide", page_title="Omni-Agent: Global Audit")
 
-# Helper to talk to your DB without broken libraries
-def supabase_query(query_url):
-    headers = {
+# --- 1. CONFIG ---
+def get_headers():
+    return {
         "apikey": st.secrets["SUPABASE_KEY"],
         "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
     }
-    return httpx.get(query_url, headers=headers).json()
 
-# --- 2. THE AUDIT ENGINE ---
-def run_global_audit():
-    # Audits ALL tables by checking 'companies' and its 'robot_models' connections
-    # We use a limit of 1 to process deep research batch-by-batch
-    base_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=*,robot_models(*)&limit=1"
-    data = supabase_query(base_url)
+# --- 2. GLOBAL SCAN LOGIC ---
+def run_global_audit_loop():
+    # 1. Fetch all companies that need an audit (ordered by oldest update)
+    base_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=*,robot_models(*)&order=last_audit.asc"
+    res = httpx.get(base_url, headers=get_headers())
+    all_companies = res.json()
     
-    if not data:
-        return None, "No data found in database."
-
-    target = data[0]
     ai = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    results = []
+
+    for company in all_companies:
+        with st.spinner(f"Auditing {company['name']}..."):
+            # 2. Deep Intelligence Audit (94-Cols + Past + Dec 2025)
+            prompt = f"""
+            Audit {company['name']} and models {[m['name'] for m in company.get('robot_models', [])]}.
+            - Technical Audit: Fill all 94 columns (Torque, Battery, DOF, Height, Weight).
+            - Past: Find founding history and prototype evolution.
+            - Present: Find Dec 2025 news (funding, deployments, milestones).
+            - Link: Verify relational IDs are correct.
+            Output as valid JSON only. Use one specific number for stats.
+            """
+            response = ai.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            
+            try:
+                # 3. Save to Database (Past, Present, and Future synced)
+                import json
+                clean_json = response.text.replace('```json', '').replace('```', '').strip()
+                audit_payload = json.loads(clean_json)
+                audit_payload["last_audit"] = "now()" # Update the audit timestamp
+                
+                update_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?id=eq.{company['id']}"
+                httpx.patch(update_url, headers=get_headers(), json=audit_payload)
+                results.append(f"✅ {company['name']} Synced.")
+            except Exception as e:
+                results.append(f"❌ {company['name']} Failed: {str(e)}")
     
-    # MISSION: Audit every field (94 columns), every table, and every connection
-    prompt = f"""
-    Omni-Agent Task: PERFORM TOTAL AUDIT.
-    Entity: {target['name']}
-    Connected Models: {[m['name'] for m in target.get('robot_models', [])]}
+    return results
 
-    1. FIELD AUDIT: Scan all 94 database columns for missing technical specs (Battery, Torque, DoF, IP Rating).
-    2. PAST: Research founding details, original prototypes, and predecessor models.
-    3. PRESENT: Find all Dec 2025 news, latest funding, and partnership breakthroughs.
-    4. CONNECTIONS: Verify if manufacturer and model IDs are correctly linked.
+# --- 3. THE DASHBOARD ---
+st.title("🛡️ Omni-Agent: Universal Relational Scan")
+st.info("Currently Auditing: Every table and connection in the database universe.")
 
-    OUTPUT ONLY DATA. Use a structured table for the 94-column audit results.
-    """
-    
-    response = ai.models.generate_content(
-        model='gemini-2.0-flash', 
-        contents=prompt
-    )
-    return target, response.text
-
-# --- 3. THE INTERFACE ---
-st.info("This agent audits every table, field, and connection across the past and present.")
-
-if st.button("▶️ START GLOBAL RELATIONAL SCAN"):
-    with st.status("🔍 Scanning Database Universe...", expanded=True) as status:
-        st.write("🛰️ Connecting to Global Tables...")
-        db_state, intel_report = run_global_audit()
-        status.update(label="✅ Audit Complete!", state="complete")
-
-    if db_state:
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.subheader("📊 Current Database State")
-            st.json(db_state)
-        with col2:
-            st.subheader("🕵️ Omni-Agent Intelligence Report")
-            st.markdown(intel_report)
-    else:
-        st.error(intel_report)
+if st.button("🚀 INITIATE GLOBAL SYNC"):
+    sync_results = run_global_audit_loop()
+    st.balloons()
+    for r in sync_results:
+        st.write(r)
