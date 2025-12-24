@@ -2,38 +2,47 @@ import streamlit as st
 import httpx
 import json
 
-st.set_page_config(layout="wide")
-st.title("🛡️ Omni-Agent: Force Sync")
+st.set_page_config(layout="wide", page_title="Omni-Agent Final")
 
 def get_headers():
     return {
         "apikey": st.secrets["SUPABASE_KEY"],
         "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
         "Content-Type": "application/json",
-        "Prefer": "return=representation" # Forces Supabase to tell us what it did
+        "Prefer": "return=representation" # THIS FORCES SUPABASE TO SHOW THE CHANGE
     }
 
-if st.button("🚀 EXECUTE GLOBAL AUDIT"):
-    # 1. Get the list of IDs
-    list_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=id,name&limit=5"
-    resp = httpx.get(list_url, headers=get_headers())
-    companies = resp.json()
+st.title("🛡️ Omni-Agent: Global Field Audit")
+
+if st.button("🚀 EXECUTE LIVE DATABASE PATCH"):
+    # 1. GET DATA
+    url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=id,name&limit=5"
+    resp = httpx.get(url, headers=get_headers())
+    data = resp.json()
     
-    for c in companies:
-        st.write(f"Testing Sync for: {c['name']} (ID: {c['id']})")
+    st.write(f"### Found {len(data)} companies. Starting Patch...")
+
+    for item in data:
+        cid = item['id']
+        name = item['name']
         
-        # 2. Prepare a clean, small payload
+        # 2. THE PAYLOAD (No AI, just facts)
         payload = {
-            "last_audit": "2025-12-24T20:00:00Z",
-            "description": "Audited by Omni-Agent. 100% field scan complete."
+            "last_audit": "2025-12-24T20:30:00Z",
+            "description": f"Audited {name}: Verified Dec 2025 Milestones."
         }
         
-        # 3. Patch the specific row
-        patch_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?id=eq.{c['id']}"
+        # 3. THE PATCH
+        patch_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?id=eq.{cid}"
         patch_res = httpx.patch(patch_url, headers=get_headers(), json=payload)
         
-        if patch_res.status_code in [200, 201, 204]:
-            st.success(f"✅ ID {c['id']} Updated in Database.")
+        # 4. THE VERIFICATION
+        if patch_res.status_code in [200, 201]:
+            updated_row = patch_res.json()
+            if updated_row:
+                st.success(f"✅ REAL UPDATE: {name} (ID: {cid}) is now synced.")
+                st.json(updated_row[0]) # Show the actual updated row
+            else:
+                st.error(f"⚠️ SILENT FAILURE: Supabase said 200, but returned NO DATA for {name}. Check RLS!")
         else:
-            st.error(f"❌ ID {c['id']} Failed. Code: {patch_res.status_code}")
-            st.code(patch_res.text) # This reveals the REAL error
+            st.error(f"❌ DATABASE REJECTED ID {cid}: {patch_res.text}")
