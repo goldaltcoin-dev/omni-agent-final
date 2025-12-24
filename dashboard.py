@@ -1,12 +1,14 @@
 import streamlit as st
 import httpx
 from google import genai
-import time
+import json
 
-st.set_page_config(layout="wide", page_title="Omni-Agent: Global Audit")
+# --- 1. SYSTEM CONFIGURATION ---
+st.set_page_config(layout="wide", page_title="Omni-Agent: Global Sync")
+st.title("🛡️ Omni-Agent: Universal Relational Audit")
 
-# --- 1. CONFIG ---
-def get_headers():
+# Direct connection headers (Past, Present, and Future Sync)
+def get_auth_headers():
     return {
         "apikey": st.secrets["SUPABASE_KEY"],
         "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
@@ -14,50 +16,63 @@ def get_headers():
         "Prefer": "return=representation"
     }
 
-# --- 2. GLOBAL SCAN LOGIC ---
-def run_global_audit_loop():
-    # 1. Fetch all companies that need an audit (ordered by oldest update)
-    base_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=*,robot_models(*)&order=last_audit.asc"
-    res = httpx.get(base_url, headers=get_headers())
-    all_companies = res.json()
+# --- 2. THE AUDIT ENGINE ---
+def run_universal_scan():
+    # Fetch all records across tables using relational joins
+    base_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?select=*,robot_models(*)&order=last_audit.asc.nullslast"
+    res = httpx.get(base_url, headers=get_auth_headers())
     
-    ai = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-    results = []
+    if res.status_code != 200:
+        st.error(f"Database Connection Failed: {res.text}")
+        return []
 
-    for company in all_companies:
-        with st.spinner(f"Auditing {company['name']}..."):
-            # 2. Deep Intelligence Audit (94-Cols + Past + Dec 2025)
+    universe = res.json()
+    ai = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    sync_logs = []
+
+    for entity in universe:
+        with st.status(f"Auditing {entity['name']} Universe...", expanded=False) as status:
+            # MISSION: Audit every field (94 columns) + Past/Present Sync
             prompt = f"""
-            Audit {company['name']} and models {[m['name'] for m in company.get('robot_models', [])]}.
-            - Technical Audit: Fill all 94 columns (Torque, Battery, DOF, Height, Weight).
-            - Past: Find founding history and prototype evolution.
-            - Present: Find Dec 2025 news (funding, deployments, milestones).
-            - Link: Verify relational IDs are correct.
-            Output as valid JSON only. Use one specific number for stats.
+            PERFORM TOTAL RELATIONAL AUDIT for {entity['name']}.
+            Tables: companies, robot_models (Linked via ID).
+            
+            1. 94-COLUMN SCAN: For models {[m['name'] for m in entity.get('robot_models', [])]}, find specific values for Torque(Nm), Battery(Wh), DoF, and Weight(kg).
+            2. PAST: Verify founding history (2023-2024) and original prototypes.
+            3. PRESENT: Identify Dec 2025 milestones, news, and funding.
+            
+            OUTPUT: Valid JSON only. Do not ask questions. Fill every field.
             """
-            response = ai.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            
+            # Grounding with Google Search for "Present" 2025 news
+            response = ai.models.generate_content(
+                model='gemini-2.0-flash', 
+                contents=prompt,
+                config={'tools': [{'google_search': {}}]}
+            )
             
             try:
-                # 3. Save to Database (Past, Present, and Future synced)
-                import json
+                # 3. Save Audit back to Database
                 clean_json = response.text.replace('```json', '').replace('```', '').strip()
                 audit_payload = json.loads(clean_json)
-                audit_payload["last_audit"] = "now()" # Update the audit timestamp
+                audit_payload["last_audit"] = "2025-12-24T12:00:00Z" # Dec 2025 Timestamp
                 
-                update_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?id=eq.{company['id']}"
-                httpx.patch(update_url, headers=get_headers(), json=audit_payload)
-                results.append(f"✅ {company['name']} Synced.")
+                update_url = f"{st.secrets['SUPABASE_URL']}/rest/v1/companies?id=eq.{entity['id']}"
+                httpx.patch(update_url, headers=get_auth_headers(), json=audit_payload)
+                
+                status.update(label=f"✅ {entity['name']} Locked.", state="complete")
+                sync_logs.append(f"Successfully audited {entity['name']} and linked models.")
             except Exception as e:
-                results.append(f"❌ {company['name']} Failed: {str(e)}")
+                status.update(label=f"❌ {entity['name']} Error.", state="error")
+                sync_logs.append(f"Failed {entity['name']}: {str(e)}")
     
-    return results
+    return sync_logs
 
-# --- 3. THE DASHBOARD ---
-st.title("🛡️ Omni-Agent: Universal Relational Scan")
-st.info("Currently Auditing: Every table and connection in the database universe.")
+# --- 3. INTERFACE ---
+st.info("Initiating 100% Audit of all tables, fields, and connections.")
 
-if st.button("🚀 INITIATE GLOBAL SYNC"):
-    sync_results = run_global_audit_loop()
+if st.button("🚀 INITIATE UNIVERSAL RELATIONAL SYNC"):
+    results = run_universal_scan()
     st.balloons()
-    for r in sync_results:
-        st.write(r)
+    for log in results:
+        st.write(log)
